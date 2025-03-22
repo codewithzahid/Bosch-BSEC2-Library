@@ -38,8 +38,21 @@
 
 #include "commMux.h"
 
-#define CLOCK_FREQUENCY 	UINT32_C(400000)
-#define COMM_SPEED      	UINT32_C(8000000)
+#define CLOCK_FREQUENCY UINT32_C(400000)
+#define COMM_SPEED UINT32_C(8000000)
+
+/**
+ * @brief Pin assignment for BME688 sensor external SPI communication pins for ESP32-S3 or other custom boards
+ */
+#define BME_SCK_PIN 18   // BME688 sensor SCK pin
+#define BME_MISO_PIN 17  // BME688 sensor MISO pin
+#define BME_MOSI_PIN 8   // BME688 sensor MOSI pin
+
+/**
+ * @brief I2C expander board custom I2C pins
+ */
+#define I2C_EXPANDER_SDA_PIN 9   // Data pin
+#define I2C_EXPANDER_SCL_PIN 10  // Clock pin
 
 const uint8_t I2C_EXPANDER_ADDR = 0x20;
 const uint8_t I2C_EXPANDER_OUTPUT_REG_ADDR = 0x01;
@@ -50,108 +63,98 @@ const uint8_t I2C_EXPANDER_CONFIG_REG_MASK = 0x00;
 /**
  * @brief Function to configure the communication across sensors
  */
-comm_mux comm_mux_set_config(TwoWire &wireobj, SPIClass &spiobj, uint8_t idx, comm_mux &comm)
-{
-	comm.select = ((0x01 << idx) ^ 0xFF);
-	comm.spiobj = &spiobj;
-	comm.wireobj = &wireobj;
+comm_mux comm_mux_set_config(TwoWire &wireobj, SPIClass &spiobj, uint8_t idx, comm_mux &comm) {
+    comm.select = ((0x01 << idx) ^ 0xFF);
+    comm.spiobj = &spiobj;
+    comm.wireobj = &wireobj;
 
-	return comm;
+    return comm;
 }
 
 /**
  * @brief Function to trigger the communication
  */
-void comm_mux_begin(TwoWire &wireobj, SPIClass &spiobj)
-{
-	wireobj.begin();
-	wireobj.setClock(CLOCK_FREQUENCY);
-	wireobj.beginTransmission(I2C_EXPANDER_ADDR);
-	wireobj.write(I2C_EXPANDER_CONFIG_REG_ADDR);
-	wireobj.write(I2C_EXPANDER_CONFIG_REG_MASK);
-	wireobj.endTransmission();
+void comm_mux_begin(TwoWire &wireobj, SPIClass &spiobj) {
+    wireobj.begin(I2C_EXPANDER_SDA_PIN, I2C_EXPANDER_SCL_PIN);
+    wireobj.setClock(CLOCK_FREQUENCY);
+    wireobj.beginTransmission(I2C_EXPANDER_ADDR);
+    wireobj.write(I2C_EXPANDER_CONFIG_REG_ADDR);
+    wireobj.write(I2C_EXPANDER_CONFIG_REG_MASK);
+    wireobj.endTransmission();
 
-	spiobj.begin();
+    spiobj.begin(BME_SCK_PIN, BME_MISO_PIN, BME_MOSI_PIN, -1);
 }
 
-/** 
+/**
  * @brief Function to set the ship select pin of the SPI
  */
-static void set_chip_select(TwoWire *wireobj, uint8_t mask)
-{
-	// send I2C-Expander device address
-	wireobj->beginTransmission(I2C_EXPANDER_ADDR);
-	// send I2C-Expander output register address
-	wireobj->write(I2C_EXPANDER_OUTPUT_REG_ADDR);
-	// send mask to set output level of GPIO pins
-	wireobj->write(mask);
-	// end communication
-	wireobj->endTransmission();
+static void set_chip_select(TwoWire *wireobj, uint8_t mask) {
+    // send I2C-Expander device address
+    wireobj->beginTransmission(I2C_EXPANDER_ADDR);
+    // send I2C-Expander output register address
+    wireobj->write(I2C_EXPANDER_OUTPUT_REG_ADDR);
+    // send mask to set output level of GPIO pins
+    wireobj->write(mask);
+    // end communication
+    wireobj->endTransmission();
 }
 
 /**
  * @brief Function to write the sensor data to the register
  */
-int8_t comm_mux_write(uint8_t reg_addr, const uint8_t *reg_data, uint32_t length, void *intf_ptr)
-{
-	comm_mux *comm = (comm_mux*) intf_ptr;
-	uint32_t i = 0;
+int8_t comm_mux_write(uint8_t reg_addr, const uint8_t *reg_data, uint32_t length, void *intf_ptr) {
+    comm_mux *comm = (comm_mux *)intf_ptr;
+    uint32_t i = 0;
 
-	if (comm)
-	{
-		set_chip_select(comm->wireobj, comm->select);
+    if (comm) {
+        set_chip_select(comm->wireobj, comm->select);
 
-		comm->spiobj->beginTransaction(SPISettings(COMM_SPEED, MSBFIRST, SPI_MODE0));
-		comm->spiobj->transfer(reg_addr);
+        comm->spiobj->beginTransaction(SPISettings(COMM_SPEED, MSBFIRST, SPI_MODE0));
+        comm->spiobj->transfer(reg_addr);
 
-		for (i = 0; i < length; i++)
-		{
-			comm->spiobj->transfer(reg_data[i]);
-		}
-		comm->spiobj->endTransaction();
+        for (i = 0; i < length; i++) {
+            comm->spiobj->transfer(reg_data[i]);
+        }
+        comm->spiobj->endTransaction();
 
-		set_chip_select(comm->wireobj, I2C_EXPANDER_OUTPUT_DESELECT);
+        set_chip_select(comm->wireobj, I2C_EXPANDER_OUTPUT_DESELECT);
 
-		return 0;
-	}
+        return 0;
+    }
 
-	return 1;
+    return 1;
 }
 
 /**
  * @brief Function to read the sensor data from the register
  */
-int8_t comm_mux_read(uint8_t reg_addr, uint8_t *reg_data, uint32_t length, void *intf_ptr)
-{
-	comm_mux *comm = (comm_mux*) intf_ptr;
-	uint32_t i = 0;
+int8_t comm_mux_read(uint8_t reg_addr, uint8_t *reg_data, uint32_t length, void *intf_ptr) {
+    comm_mux *comm = (comm_mux *)intf_ptr;
+    uint32_t i = 0;
 
-	if (comm)
-	{
-		set_chip_select(comm->wireobj, comm->select);
+    if (comm) {
+        set_chip_select(comm->wireobj, comm->select);
 
-		comm->spiobj->beginTransaction(SPISettings(COMM_SPEED, MSBFIRST, SPI_MODE0));
-		comm->spiobj->transfer(reg_addr);
+        comm->spiobj->beginTransaction(SPISettings(COMM_SPEED, MSBFIRST, SPI_MODE0));
+        comm->spiobj->transfer(reg_addr);
 
-		for (i = 0; i < length; i++)
-		{
-			reg_data[i] = comm->spiobj->transfer(0xFF);
-		}
-		comm->spiobj->endTransaction();
+        for (i = 0; i < length; i++) {
+            reg_data[i] = comm->spiobj->transfer(0xFF);
+        }
+        comm->spiobj->endTransaction();
 
-		set_chip_select(comm->wireobj, I2C_EXPANDER_OUTPUT_DESELECT);
+        set_chip_select(comm->wireobj, I2C_EXPANDER_OUTPUT_DESELECT);
 
-		return 0;
-	}
+        return 0;
+    }
 
-	return 1;
+    return 1;
 }
 
 /**
  * @brief Function to maintain a delay between communication
  */
-void comm_mux_delay(uint32_t period_us, void *intf_ptr)
-{
-	(void) intf_ptr;
-	delayMicroseconds(period_us);
+void comm_mux_delay(uint32_t period_us, void *intf_ptr) {
+    (void)intf_ptr;
+    delayMicroseconds(period_us);
 }
